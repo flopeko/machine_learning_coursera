@@ -1,0 +1,126 @@
+---
+title: "Predicting Human Activity"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+# Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+In this project,we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of the project is to predict the manner in which they did the exercise.
+
+The training and test data for this purpose are available at the following links:
+
+* Training: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+* Test: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+More information about the Human Activity Recognition project and how the data was collected is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+```{r, echo= FALSE, warning= FALSE, results= "hide", include= FALSE}
+setwd("C:/_almacen/coursera/machine learning")
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(gbm)
+test<- read.csv("pml-testing.csv")
+train<- read.csv("pml-training.csv")
+```
+
+# Exploratory Data Analysis
+First of all, we'll have a quick look at the data dimensions:
+```{r}
+dim(train)
+dim(test)
+```
+We have 160 variables to predict the outcome (classe), but maybe some columns do not contribute much to the accelerometer measurements as they have little variance or all values are NA. We'll remove that variables from the dataset, and apply the same transformations to the dataset.
+```{r}
+# keep columns that have at least 1 value different from NA
+test<- test[, colSums(is.na(train))== 0]
+train<- train[, colSums(is.na(train))== 0]
+# calculate columns that have no variance and remove them from the dataset
+zero_var<- nearZeroVar(train)
+train<- train[, -zero_var]
+test<- test[, -zero_var]
+col_remove<- grepl("^X|timestamp|window", names(train))
+train<- train[, -col_remove]
+test<- test[, -col_remove]
+dim(train)
+dim(test)
+```
+
+We are kepping 58 variables instead of the original 160.
+
+# Data Modeling
+The test data set will be used for grading purposes, as it only has 20 cases. Thus, the train data set will be split into 2 new data sets used for modeling and testing the constructed predicting models. The split is based on the "classe" variable. Also, for reproducibility purposes, the seed will be set to 1.
+```{r}
+set.seed(1)
+in_train<- createDataPartition(y= train$classe, p= 0.7, list= FALSE)
+modeling<- train[in_train, ]
+testing<- train[-in_train, ]
+```
+We'll try with 3 different methods (random forest, CART & Boosting) in order to predict the "classe" variable. To control the training methods we'll use:
+```{r}
+train_control <- trainControl(method="cv", number= 3, verboseIter= FALSE)
+```
+### Random forest model, prediction & accuracy
+We'll use the confusionMatrix function to test accuracy; also, in the model construction, we calculate de elapsed time in the calculation with the system.time function.
+```{r}
+# constructing the model
+tm_rf<-system.time(model_rf<- train(classe~ ., data= modeling, method= "rf", trControl= train_control, ntree= 50))
+# model_rf<- train(classe~ ., data= modeling, method= "rf", trControl= train_control, ntree= 50)
+# predicting
+pred_rf<- predict(model_rf, newdata= testing)
+# confusion matrix
+cm_rf<- confusionMatrix(pred_rf, testing$classe)
+cm_rf$table
+accuracy_rf<- postResample(pred_rf, testing$classe)
+oose_rf<- 1- as.numeric(confusionMatrix(testing$classe, pred_rf)$overall[1])
+```
+### CART model, prediction & accuracy
+```{r}
+# constructing the model
+tm_cart<-system.time(model_cart<-train(classe~ ., data= modeling, method= "rpart", trControl= train_control))
+# predicting
+pred_cart<- predict(model_cart, newdata= testing)
+# confusion matrix
+cm_cart<- confusionMatrix(pred_cart, testing$classe)
+cm_cart$table
+accuracy_cart<- postResample(pred_cart, testing$classe)
+oose_cart<- 1- as.numeric(confusionMatrix(testing$classe, pred_cart)$overall[1])
+```
+### Boosting model, prediction & accuracy
+```{r, warning= FALSE}
+# constructing the model
+tm_boost<-system.time(model_boost<-train(classe~ ., data= modeling, method= "gbm", trControl= train_control, verbose= FALSE))
+# predicting
+pred_boost<- predict(model_boost, newdata= testing)
+# confusion matrix
+cm_boost<- confusionMatrix(pred_boost, testing$classe)
+cm_boost$table
+accuracy_boost<- postResample(pred_boost, testing$classe)
+oose_boost<- 1- as.numeric(confusionMatrix(testing$classe, pred_boost)$overall[1])
+```
+# Comparing models & conclusion
+```{r}
+model_comp<- data.frame(
+        method= c("random forest", "cart", "boosting"),
+        accuracy= c(accuracy_rf[1], accuracy_cart[1], accuracy_boost[1]),
+        oose= c(oose_rf, oose_cart, oose_boost),
+        time_elapsed= c(tm_rf[3], tm_cart[3], tm_boost[3])
+)
+model_comp
+```
+We observe that both random forest and boosting models have an accuracy near 1, with lower elapsed time for the random forest. We'll reject of using cart as it has a low accuracy level.
+
+# Prediction
+For prediction on the test data set we will use the random forest model:
+```{r}
+pred_rf<- predict(model_rf, newdata= test)
+pred_rf
+```
